@@ -1,0 +1,16 @@
+# Python-Cache
+__pycache__/
+*.pyc
+
+# MicroPython-spezifische Stubs/Tools
+.micropython-stubs/
+.pico-w-go/
+
+# Virtuelle Umgebungen
+.venv/
+venv/
+env/
+
+# Sensible Konfigurationsdateien
+# Diese Datei enthält WLAN- und MQTT-Passwörter
+private.py
