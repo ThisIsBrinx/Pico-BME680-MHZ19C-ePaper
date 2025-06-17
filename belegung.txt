@@ -1,0 +1,42 @@
+Pico (Physisch/GP)           ->          Gerät       Pin
+==========================================================
+Pin 1 GP 0                
+Pin 2 GP 1                
+Pin 3 GND
+Pin 4 GP 2
+Pin 5 GP 3
+Pin 6 GP 4      ->          MH-Z19C     RX
+Pin 7 GP 5      ->          MH-Z19C     TX
+Pin 8 GND
+Pin 9 GP 6
+Pin 10 GP 7
+Pin 11 GP 8     ->          ePaper      DC
+Pin 12 GP 9     ->          ePaper      CS
+Pin 13 GND
+Pin 14 GP 10    ->          ePaper      CLK
+Pin 15 GP 11    ->          ePaper      DIN
+Pin 16 GP 12    ->          ePaper      RST
+Pin 17 GP 13    ->          ePaper      BUSY
+Pin 18 GND
+Pin 19 GP 14
+Pin 20 GP 15
+Pin 21 GP 16
+Pin 22 GP 17
+Pin 23 GND
+Pin 24 GP 18
+Pin 25 GP 19
+Pin 26 GP 20    ->          BME680      SDA
+Pin 27 GP 21    ->          BME680      SCL
+Pin 28 GND
+Pin 29 GP 22              
+Pin 30 RUN
+Pin 31 GP 26
+Pin 32 GP 27
+Pin 33 GND 
+Pin 34 GP28               
+Pin 35 ADC 
+Pin 36 3v3 out 
+Pin 37 3v3_EN
+Pin 38 GND 
+Pin 39 VSYS
+Pin 40 VBUS
