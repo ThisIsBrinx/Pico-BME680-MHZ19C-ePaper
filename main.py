@@ -7,6 +7,13 @@ import network # type: ignore
 from mqttLib import MQTTClient, MQTTException
 import gc
 import private
+import utime
+try:
+    import ntptime # type: ignore
+    NTP_AVAILABLE = True
+except ImportError:
+    print("Warnung: ntptime Modul nicht gefunden. Zeit-Feature ist deaktiviert.")
+    NTP_AVAILABLE = False
 
 #####
 # short init
@@ -33,6 +40,9 @@ flash(100,2)
 # General Settings
 #####
 waitingTimeinS = 3
+last_ntp_sync = 0
+time_synced = False
+
 # WIFI
 # country
 network.country('DE')
@@ -86,6 +96,9 @@ if 'sealevelpressure' in locals():
 # degree symbol decleration
 degreecels = '\u00B0' + "C"
 
+# Start-Annahme für saubere Luft (als float für genauere Berechnung)
+voc_baseline = 50000.0 
+
 
 #####
 # MHZ19C
@@ -98,7 +111,6 @@ mhz = MHZ19BSensor(tx_pin=mhz_tx_pin, rx_pin=mhz_rx_pin)
 # ePaper-Display
 #####
 epd = EPD_2in7()
-epd.EPD_2IN7_Init()
 
 ##########
 # Functions
@@ -124,80 +136,94 @@ def connectWifi():
 
 while True:
     try:
-        # Prüfen, ob eine MQTT-Verbindung besteht. Wenn nicht, verbinden.
-        # Wir prüfen das interne ".sock"-Attribut, da die Bibliothek keine "is_connected()"-Methode hat.
+        # ----- Zeit-Synchronisation (NTP) -----
+        # Synchronisiere alle 6 Stunden oder beim ersten Mal, falls noch nicht geschehen
+        if NTP_AVAILABLE and (not time_synced or utime.time() - last_ntp_sync > 21600):
+            if wlan.isconnected():
+                try:
+                    print("Synchronisiere Uhrzeit via NTP...")
+                    ntptime.settime()
+                    last_ntp_sync = utime.time()
+                    time_synced = True
+                    print("Uhrzeit synchronisiert.")
+                except Exception as e:
+                    print(f"NTP-Fehler: {e}")
+                    time_synced = False
+            else:
+                print("Kein WLAN für NTP-Sync.")
+
+        # ----- MQTT-Verbindung -----
         if mqtt_client_hass.sock is None:
             print("MQTT-Verbindung wird aufgebaut...")
+            if not wlan.isconnected(): connectWifi()
             mqtt_client_hass.connect()
             print("MQTT verbunden.")
 
         ###
-        # meassure
+        # 1. Daten auslesen
         ###
-
-        # CO2
         co2 = mhz.measure()[0]
-        # temperature
         temp = bme680.temperature + temperature_offset
-        # humidity
         humi = bme680.humidity
-        # VOC
         voc = bme680.gas
-        # Pressure
-        pressure = bme680.pressure
-        # Altitude
-        altitude = bme680.altitude
 
+        ###
+        # 2. Daten interpretieren & Logik für Dauerbetrieb
+        ###
+        co2_bewertung = "Gut"
+        if co2 > 1400: co2_bewertung = "Schlecht"
+        elif co2 > 1000: co2_bewertung = "Mittel"
 
-        #####
-        # Output via Mqtt
-        #####
-        print("Sende Daten via MQTT...")
-        mqtt_client_hass.publish(mqtt_publish_topic_hass_co2, str(co2))
-        mqtt_client_hass.publish(mqtt_publish_topic_hass_voc, str(voc))
-        mqtt_client_hass.publish(mqtt_publish_topic_hass_temp, str(temp))
-        mqtt_client_hass.publish(mqtt_publish_topic_hass_humi, str(humi))
-        mqtt_client_hass.publish(mqtt_publish_topic_hass_pres, str(pressure))
-        print("Daten gesendet.")
-
-        # HINWEIS: Füge hier deinen Code für die ePaper-Anzeige ein, falls noch nicht geschehen!
-
-
-        #####
-        # Helper
-        #####
-        if 'voc_max' in globals():
-            voc_max = max(voc_max, voc)
+        lernfaktor_up = 0.05
+        lernfaktor_down = 0.005
+        if voc > voc_baseline:
+            voc_baseline += (voc - voc_baseline) * lernfaktor_up
         else:
-            voc_max = voc
-        if 'voc_min' in globals():
-            voc_min = min(voc_min, voc)
-        else:
-            voc_min = voc
+            voc_baseline += (voc - voc_baseline) * lernfaktor_down
+        
+        luftguete_prozent = min(100, (voc / voc_baseline) * 100)
 
-        print("CO2: %d ppm" % co2)
-        print("Gas: %d ohm" % voc)
-        print("Humidity: %0.1f %%" % humi)
-        print("temp ", temp)
-        print("Pressure: %0.3f hPa" % pressure)
-        print("Altitude = %0.2f meters" % altitude)
-        print("")
-        print("Gas minimum: %d ohm - Schlechteste Luft" % voc_min)
-        print("Gas maximum: %d ohm - Beste Luft" % voc_max)
-        print("============\n")
+        zeit_str = "--:--"
+        if time_synced:
+            # UTC-Zeit holen und in deutsche Zeit umrechnen (UTC+2 im Sommer)
+            current_time = utime.localtime(utime.time() + 7200)
+            zeit_str = f"{current_time[3]:02d}:{current_time[4]:02d}"
 
+        ###
+        # 3. Dashboard zeichnen
+        ###
+        epd.image4Gray.fill(epd.white)
+        epd.image4Gray.text("RAUMKLIMA", 15, 8, epd.black)
+        epd.image4Gray.text(zeit_str, 120, 8, epd.black)
+        epd.image4Gray.hline(8, 24, 160, epd.black)
+        epd.image4Gray.hline(8, 26, 160, epd.black)
+        
+        epd.image4Gray.text("CO2", 15, 65, epd.black)
+        epd.image4Gray.text(f"{co2} ppm", 100, 65, epd.black)
+        epd.image4Gray.text(f"({co2_bewertung})", 65, 85, epd.black)
+        epd.image4Gray.hline(8, 110, 160, epd.black)
+        y_pos = 130
+        epd.image4Gray.text("Temperatur", 15, y_pos, epd.black)
+        epd.image4Gray.text(f"{temp:.1f} C", 115, y_pos, epd.black)
+        epd.image4Gray.hline(15, y_pos + 20, 146, epd.black)
+        y_pos += 35
+        epd.image4Gray.text("Feuchtigkeit", 15, y_pos, epd.black)
+        epd.image4Gray.text(f"{humi:.1f} %", 115, y_pos, epd.black)
+        epd.image4Gray.hline(15, y_pos + 20, 146, epd.black)
+        y_pos += 35
+        epd.image4Gray.text("Luftguete", 15, y_pos, epd.black)
+        epd.image4Gray.text(f"{luftguete_prozent:.0f} %", 115, y_pos, epd.black)
+
+        epd.EPD_2IN7_4Gray_Display(epd.buffer_4Gray)
+        
     except (OSError, MQTTException) as e:
-        print(f"Fehler aufgetreten: {e}. Setze MQTT-Verbindung zurück.")
-        # Wenn ein Fehler auftritt, könnte die Verbindung unterbrochen sein.
-        # Wir schliessen die Verbindung und setzen sie auf None,
-        # damit sie im nächsten Schleifendurchlauf neu aufgebaut wird.
+        print(f"Fehler aufgetreten: {e}. Setze Verbindung zurück.")
         if mqtt_client_hass.sock:
-            mqtt_client_hass.sock.close()
+            try: mqtt_client_hass.sock.close()
+            except OSError: pass
         mqtt_client_hass.sock = None
-        # Kurze Pause vor dem nächsten Versuch
         sleep(5)
 
-
-    # Speicherbereinigung und warten
     gc.collect()
+    print(f"Warte {waitingTimeinS} Sekunden bis zur nächsten Messung...")
     sleep(waitingTimeinS)
