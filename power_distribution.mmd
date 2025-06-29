@@ -1,0 +1,44 @@
+graph TD;
+    subgraph Stromversorgung
+        PSU["USB-Netzteil (5V, 1A)"];
+    end
+
+    subgraph "Ihre Verteilerplatine"
+        Rail5V["5V-Schiene"];
+        StepDown["Step-Down-Wandler (5V -> 3.3V)"];
+        Rail3V3["3.3V-Schiene"];
+        RailGND["Gemeinsame GND-Schiene"];
+    end
+
+    subgraph "5V Verbraucher"
+        Pico["Raspberry Pi Pico"];
+        MHZ["MH-Z19C Sensor"];
+    end
+
+    subgraph "3.3V Verbraucher"
+        BME["BME680 Sensor"];
+        EPD["ePaper-Display"];
+    end
+    
+    PSU -- 5V --> Rail5V;
+    PSU -- GND --> RailGND;
+    
+    Rail5V --> Pico;
+    Rail5V --> MHZ;
+    Rail5V --> StepDown;
+    
+    StepDown --> Rail3V3;
+    
+    Rail3V3 --> BME;
+    Rail3V3 --> EPD;
+
+    Pico -- GND --> RailGND;
+    MHZ -- GND --> RailGND;
+    StepDown -- GND --> RailGND;
+    BME -- GND --> RailGND;
+    EPD -- GND --> RailGND;
+    
+    style PSU fill:#f9f,stroke:#333,stroke-width:2px
+    style Rail5V fill:#FFDAB9,stroke:#333,stroke-width:2px
+    style Rail3V3 fill:#ADD8E6,stroke:#333,stroke-width:2px
+    style RailGND fill:#lightgrey,stroke:#333,stroke-width:2px

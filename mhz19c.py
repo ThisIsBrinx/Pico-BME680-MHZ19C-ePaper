@@ -4,8 +4,8 @@ import time
 class MHZ19BSensor:
     # initializes a new instance
 #    def __init__(self, tx_pin:Pin, rx_pin:Pin):
-    def __init__(self):
-        self.uart = UART(0, baudrate=9600, tx=Pin(0), rx=Pin(1), bits=8, parity=None, stop=1)
+    def __init__(self, tx_pin:Pin, rx_pin:Pin):
+        self.uart = UART(1, baudrate=9600, tx=tx_pin, rx=rx_pin, bits=8, parity=None, stop=1)
 #        self.lights = lights
 #        self.co2_threshold = int(co2_threshold)
 

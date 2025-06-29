@@ -4,7 +4,7 @@ from epaper import EPD_2in7
 from utime import sleep, sleep_ms # type: ignore
 from bme680 import *
 import network # type: ignore
-from mqttLib import MQTTClient
+from mqttLib import MQTTClient, MQTTException
 import gc
 import private
 
@@ -90,7 +90,9 @@ degreecels = '\u00B0' + "C"
 #####
 # MHZ19C
 #####
-mhz = MHZ19BSensor()
+mhz_tx_pin = Pin(4)
+mhz_rx_pin = Pin(5)
+mhz = MHZ19BSensor(tx_pin=mhz_tx_pin, rx_pin=mhz_rx_pin)
 
 #####
 # ePaper-Display
@@ -108,7 +110,7 @@ def connectWifi():
     timerBeforeRestart = 20
     
     if not wlan.isconnected():
-        print('connecting to network...')
+        print('connecting to network...', SSID)
         wlan.active(True)
         wlan.connect(SSID, SSID_PASSWORD)
         while not wlan.isconnected():
@@ -121,74 +123,81 @@ def connectWifi():
 
 
 while True:
-    if wlan.isconnected() == False:
-        print("start to connect")
-        connectWifi()
-        result = mqtt_client_hass.connect()
-        if result is None:
-            print("Failed to connect to MQTT Broker")
+    try:
+        # Prüfen, ob eine MQTT-Verbindung besteht. Wenn nicht, verbinden.
+        # Wir prüfen das interne ".sock"-Attribut, da die Bibliothek keine "is_connected()"-Methode hat.
+        if mqtt_client_hass.sock is None:
+            print("MQTT-Verbindung wird aufgebaut...")
+            mqtt_client_hass.connect()
+            print("MQTT verbunden.")
+
+        ###
+        # meassure
+        ###
+
+        # CO2
+        co2 = mhz.measure()[0]
+        # temperature
+        temp = bme680.temperature + temperature_offset
+        # humidity
+        humi = bme680.humidity
+        # VOC
+        voc = bme680.gas
+        # Pressure
+        pressure = bme680.pressure
+        # Altitude
+        altitude = bme680.altitude
 
 
-    ###
-    # meassure
-    ###
+        #####
+        # Output via Mqtt
+        #####
+        print("Sende Daten via MQTT...")
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_co2, str(co2))
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_voc, str(voc))
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_temp, str(temp))
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_humi, str(humi))
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_pres, str(pressure))
+        print("Daten gesendet.")
 
-    # CO2
-    co2 = mhz.measure()[0]
-    # temperature
-    temp = bme680.temperature + temperature_offset
-    # humidity
-    humi = bme680.humidity
-    # VOC
-    voc = bme680.gas
-    # Pressure
-    pressure = bme680.pressure
-    # Altitude
-    altitude = bme680.altitude
+        # HINWEIS: Füge hier deinen Code für die ePaper-Anzeige ein, falls noch nicht geschehen!
 
 
-    #####
-    # Output via Mqtt
-    #####
-    if wlan.isconnected():
-        if mqtt_client_hass:
-            print("mqtt connected")
-            mqtt_client_hass.publish(mqtt_publish_topic_hass_co2, str(co2))
-            mqtt_client_hass.publish(mqtt_publish_topic_hass_voc, str(voc))
-            mqtt_client_hass.publish(mqtt_publish_topic_hass_temp, str(temp))
-            mqtt_client_hass.publish(mqtt_publish_topic_hass_humi, str(humi))
-            mqtt_client_hass.publish(mqtt_publish_topic_hass_pres, str(pressure))
-            print("sent")
+        #####
+        # Helper
+        #####
+        if 'voc_max' in globals():
+            voc_max = max(voc_max, voc)
         else:
-            print("MQTT client not connected")
-    else:
-        print("not sent")
+            voc_max = voc
+        if 'voc_min' in globals():
+            voc_min = min(voc_min, voc)
+        else:
+            voc_min = voc
 
-#####
-# Helper
-#####
-    if 'voc_max' in globals():
-        voc_max = max(voc_max, voc)
-    else:
-        voc_max = voc
-    if 'voc_min' in globals():
-        voc_min = min(voc_min, voc)
-    else:
-        voc_min = voc
+        print("CO2: %d ppm" % co2)
+        print("Gas: %d ohm" % voc)
+        print("Humidity: %0.1f %%" % humi)
+        print("temp ", temp)
+        print("Pressure: %0.3f hPa" % pressure)
+        print("Altitude = %0.2f meters" % altitude)
+        print("")
+        print("Gas minimum: %d ohm - Schlechteste Luft" % voc_min)
+        print("Gas maximum: %d ohm - Beste Luft" % voc_max)
+        print("============\n")
 
-    print("CO2: %d ppm" % co2)
-    print("Gas: %d ohm" % voc)
-    print("Humidity: %0.1f %%" % humi) #(40 - 60 Gut)
-    print("temp ", temp)
-    print("Pressure: %0.3f hPa" % pressure)
-    print("Altitude = %0.2f meters" % altitude)
-    print("")
-    print("Gas minimum: %d ohm - Schlechteste Luft" % voc_min)
-    print("Gas maximum: %d ohm - Beste Luft" % voc_max)
-    print("============\n")
+    except (OSError, MQTTException) as e:
+        print(f"Fehler aufgetreten: {e}. Setze MQTT-Verbindung zurück.")
+        # Wenn ein Fehler auftritt, könnte die Verbindung unterbrochen sein.
+        # Wir schliessen die Verbindung und setzen sie auf None,
+        # damit sie im nächsten Schleifendurchlauf neu aufgebaut wird.
+        if mqtt_client_hass.sock:
+            mqtt_client_hass.sock.close()
+        mqtt_client_hass.sock = None
+        # Kurze Pause vor dem nächsten Versuch
+        sleep(5)
 
 
     # Speicherbereinigung und warten
     gc.collect()
-
-    time.sleep(waitingTimeinS)
+    sleep(waitingTimeinS)
