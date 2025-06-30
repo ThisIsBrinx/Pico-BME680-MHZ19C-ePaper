@@ -1,13 +1,15 @@
-from machine import Pin, UART, I2C, reset # type: ignore
+from machine import Pin, UART, I2C, reset
 from mhz19c import MHZ19BSensor
 from epaper import EPD_2in7
-from utime import sleep, sleep_ms # type: ignore
+from utime import sleep, sleep_ms
 from bme680 import *
 import network # type: ignore
 from mqttLib import MQTTClient, MQTTException
 import gc
 import private
 import utime
+
+# Robuster Import für ntptime
 try:
     import ntptime # type: ignore
     NTP_AVAILABLE = True
@@ -15,13 +17,35 @@ except ImportError:
     print("Warnung: ntptime Modul nicht gefunden. Zeit-Feature ist deaktiviert.")
     NTP_AVAILABLE = False
 
+
+# --- Funktionen zum Speichern und Laden des VOC-Basiswerts ---
+def save_baseline(baseline):
+    """Speichert den VOC-Basiswert in eine Datei."""
+    try:
+        with open('baseline.txt', 'w') as f:
+            f.write(str(baseline))
+        print(f"Basiswert {baseline} erfolgreich in 'baseline.txt' gespeichert.")
+    except Exception as e:
+        print(f"Fehler beim Speichern des Basiswerts: {e}")
+
+def load_baseline():
+    """Lädt den VOC-Basiswert aus einer Datei."""
+    try:
+        with open('baseline.txt', 'r') as f:
+            baseline_str = f.read()
+            print(f"Basiswert aus 'baseline.txt' geladen: {baseline_str}")
+            return float(baseline_str)
+    except (OSError, ValueError) as e:
+        print(f"Keine gültige 'baseline.txt' gefunden oder Lesefehler: {e}. Starte mit Standardwert.")
+        return 50000.0 # Standard-Startwert
+
+# --- ENDE der neuen Funktionen ---
+
+
 #####
 # short init
 #####
-
-
-#external LED
-led = machine.Pin('LED', machine.Pin.OUT, value=0) # type: ignore
+led = machine.Pin('LED', machine.Pin.OUT, value=0)
 led.on()
 
 def flash(timeInMs, repeat):
@@ -39,38 +63,33 @@ flash(100,2)
 #####
 # General Settings
 #####
-waitingTimeinS = 3
-last_ntp_sync = 0
-time_synced = False
-
-# WIFI
-# country
+waitingTimeinS = 60
 network.country('DE')
-# Client-Mode
 wlan = network.WLAN(network.STA_IF)
 
 SSID = private.SSID
 SSID_PASSWORD = private.SSID_PASSWORD
 
-# MQTT
 mqtt_client_id = private.mqtt_client_id
-## HomeAssistant config
 mqtt_host_hass = private.mqtt_host_hass
 mqtt_username_hass = private.mqtt_username_hass
 mqtt_password_hass = private.mqtt_password_hass
-### topics
-mqtt_publish_topic_hass_co2 = "/mobile/co2/"
-mqtt_publish_topic_hass_voc = "/mobile/voc/"
-mqtt_publish_topic_hass_temp = "/mobile/temp/"
-mqtt_publish_topic_hass_pres = "/mobile/pres/"
-mqtt_publish_topic_hass_humi = "/mobile/humi/"
-### init
-# Initialize our HomeAssistant MQTTClient and connect to the MQTT server
+mqtt_publish_topic_hass_co2 = "/office/co2/"
+mqtt_publish_topic_hass_voc = "/office/voc/"
+mqtt_publish_topic_hass_temp = "/office/temp/"
+mqtt_publish_topic_hass_pres = "/office/pres/"
+mqtt_publish_topic_hass_humi = "/office/humi/"
 mqtt_client_hass = MQTTClient(
     client_id=mqtt_client_id,
     server=mqtt_host_hass,
     user=mqtt_username_hass,
     password=mqtt_password_hass)
+
+# Variablen für die intelligente Logik
+voc_baseline = load_baseline() # Lade den gespeicherten Basiswert beim Start
+last_ntp_sync = 0
+time_synced = False
+last_save_time = utime.time() # Zeit des letzten Speicherns merken
 
 
 #####
@@ -78,26 +97,13 @@ mqtt_client_hass = MQTTClient(
 #####
 bme680_i2c_sda = Pin(20)
 bme680_i2c_scl = Pin(21)
-# change this to match the location's pressure (hPa) at sea level
 sealevelpressure = 1012.25
-# Initialize BME680 Sensor
-bme680 = BME680_I2C(I2C(0, sda=bme680_i2c_sda,scl=bme680_i2c_scl))
-
-
-# You will usually have to add an offset to account for the temperature of
-# the sensor. This is usually around 5 degrees but varies by use. Use a
-# separate temperature sensor to calibrate this one.
+# Stelle sicher, dass du den richtigen I2C-Bus (0 oder 1) verwendest
+bme680 = BME680_I2C(I2C(0, sda=bme680_i2c_sda, scl=bme680_i2c_scl, freq=100000))
 temperature_offset = -3.3
-
-# set sealevel if it is conffigured
 if 'sealevelpressure' in locals():
     bme680.sea_level_pressure = sealevelpressure
-
-# degree symbol decleration
 degreecels = '\u00B0' + "C"
-
-# Start-Annahme für saubere Luft (als float für genauere Berechnung)
-voc_baseline = 50000.0 
 
 
 #####
@@ -105,6 +111,7 @@ voc_baseline = 50000.0
 #####
 mhz_tx_pin = Pin(4)
 mhz_rx_pin = Pin(5)
+# Stelle sicher, dass du den richtigen UART-Bus (0 oder 1) verwendest
 mhz = MHZ19BSensor(tx_pin=mhz_tx_pin, rx_pin=mhz_rx_pin)
 
 #####
@@ -112,17 +119,14 @@ mhz = MHZ19BSensor(tx_pin=mhz_tx_pin, rx_pin=mhz_rx_pin)
 #####
 epd = EPD_2in7()
 
+
 ##########
 # Functions
 ##########
-
-# WiFi
 def connectWifi():
-    
     timerBeforeRestart = 20
-    
     if not wlan.isconnected():
-        print('connecting to network...', SSID)
+        print('connecting to network...')
         wlan.active(True)
         wlan.connect(SSID, SSID_PASSWORD)
         while not wlan.isconnected():
@@ -134,10 +138,14 @@ def connectWifi():
     print('Connected! Network config:', wlan.ifconfig())
 
 
+# Verbinde initial mit dem WLAN
+connectWifi()
+
+
+# --- HAUPTSCHLEIFE ---
 while True:
     try:
         # ----- Zeit-Synchronisation (NTP) -----
-        # Synchronisiere alle 6 Stunden oder beim ersten Mal, falls noch nicht geschehen
         if NTP_AVAILABLE and (not time_synced or utime.time() - last_ntp_sync > 21600):
             if wlan.isconnected():
                 try:
@@ -185,42 +193,62 @@ while True:
 
         zeit_str = "--:--"
         if time_synced:
-            # UTC-Zeit holen und in deutsche Zeit umrechnen (UTC+2 im Sommer)
-            current_time = utime.localtime(utime.time() + 7200)
+            current_time = utime.localtime(utime.time() + 7200) # UTC+2 für Sommerzeit
             zeit_str = f"{current_time[3]:02d}:{current_time[4]:02d}"
+        
+        # Periodisches Speichern des Basiswerts
+        if utime.time() - last_save_time > 1800: # Alle 30 Minuten
+            save_baseline(voc_baseline)
+            last_save_time = utime.time()
 
         ###
-        # 3. Dashboard zeichnen
+        # 3. MQTT Daten senden
+        ###
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_co2, str(co2))
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_voc, str(voc))
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_temp, str(temp))
+        mqtt_client_hass.publish(mqtt_publish_topic_hass_humi, str(humi))
+
+        ###
+        # 4. Dashboard zeichnen
         ###
         epd.image4Gray.fill(epd.white)
         epd.image4Gray.text("RAUMKLIMA", 15, 8, epd.black)
         epd.image4Gray.text(zeit_str, 120, 8, epd.black)
         epd.image4Gray.hline(8, 24, 160, epd.black)
-        epd.image4Gray.hline(8, 26, 160, epd.black)
         
-        epd.image4Gray.text("CO2", 15, 65, epd.black)
-        epd.image4Gray.text(f"{co2} ppm", 100, 65, epd.black)
-        epd.image4Gray.text(f"({co2_bewertung})", 65, 85, epd.black)
-        epd.image4Gray.hline(8, 110, 160, epd.black)
-        y_pos = 130
+        epd.image4Gray.text("CO2", 15, 45, epd.black)
+        epd.image4Gray.text(f"{co2} ppm", 100, 45, epd.black)
+        epd.image4Gray.text(f"({co2_bewertung})", 65, 65, epd.black)
+        epd.image4Gray.hline(8, 90, 160, epd.black)
+        
+        y_pos = 110
         epd.image4Gray.text("Temperatur", 15, y_pos, epd.black)
         epd.image4Gray.text(f"{temp:.1f} C", 115, y_pos, epd.black)
         epd.image4Gray.hline(15, y_pos + 20, 146, epd.black)
+        
         y_pos += 35
         epd.image4Gray.text("Feuchtigkeit", 15, y_pos, epd.black)
         epd.image4Gray.text(f"{humi:.1f} %", 115, y_pos, epd.black)
         epd.image4Gray.hline(15, y_pos + 20, 146, epd.black)
+        
         y_pos += 35
         epd.image4Gray.text("Luftguete", 15, y_pos, epd.black)
         epd.image4Gray.text(f"{luftguete_prozent:.0f} %", 115, y_pos, epd.black)
 
         epd.EPD_2IN7_4Gray_Display(epd.buffer_4Gray)
+        print("Dashboard aktualisiert.")
         
+        print(f"CO2: {co2} ppm ({co2_bewertung}), Temp: {temp:.1f} C, rH: {humi:.1f} %, Luftguete: {luftguete_prozent:.0f}% (VOC: {voc} Ohm, Base: {voc_baseline:.0f})")
+        print("============\n")
+
     except (OSError, MQTTException) as e:
         print(f"Fehler aufgetreten: {e}. Setze Verbindung zurück.")
-        if mqtt_client_hass.sock:
-            try: mqtt_client_hass.sock.close()
-            except OSError: pass
+        if mqtt_client_hass is not None and mqtt_client_hass.sock is not None:
+            try:
+                mqtt_client_hass.sock.close()
+            except OSError:
+                pass
         mqtt_client_hass.sock = None
         sleep(5)
 
