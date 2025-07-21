@@ -221,9 +221,15 @@ class EPD_2in7:
         
     def ReadBusy(self):
         print("e-Paper busy")
-        # Warten, solange der BUSY_PIN auf HIGH (1) ist, was "beschäftigt" bedeutet.
+        timeout_ms = 3000  # max wait time = 5 seconds
+        start_time = utime.ticks_ms()
+
         while self.digital_read(self.busy_pin) == 1:
-            utime.sleep_ms(10)  # Kurze Pause, um den Prozessor zu entlasten
+            if utime.ticks_diff(utime.ticks_ms(), start_time) > timeout_ms:
+                self.reset()
+                self.__init__()
+                raise OSError("E-Paper Busy Timeout!")
+            utime.sleep_ms(100)
         print("e-Paper busy release")
         
     def SetLut(self):

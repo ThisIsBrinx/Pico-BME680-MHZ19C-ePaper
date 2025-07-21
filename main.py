@@ -18,6 +18,27 @@ except ImportError:
     NTP_AVAILABLE = False
 
 
+#####
+# short init
+#####
+led = machine.Pin('LED', machine.Pin.OUT, value=0)
+led.on()
+
+def flash(timeInMs, repeat):
+    i = 0
+    while i < repeat:        
+        sleep_ms(timeInMs)
+        led.off()
+        sleep_ms(timeInMs)
+        led.on()
+        i= i+1
+
+flash(100,2)
+
+##########
+# Functions
+##########
+
 # --- Funktionen zum Speichern und Laden des VOC-Basiswerts ---
 def save_baseline(baseline):
     """Speichert den VOC-Basiswert in eine Datei."""
@@ -39,25 +60,20 @@ def load_baseline():
         print(f"Keine gültige 'baseline.txt' gefunden oder Lesefehler: {e}. Starte mit Standardwert.")
         return 50000.0 # Standard-Startwert
 
-# --- ENDE der neuen Funktionen ---
-
-
-#####
-# short init
-#####
-led = machine.Pin('LED', machine.Pin.OUT, value=0)
-led.on()
-
-def flash(timeInMs, repeat):
-    i = 0
-    while i < repeat:        
-        sleep_ms(timeInMs)
-        led.off()
-        sleep_ms(timeInMs)
-        led.on()
-        i= i+1
-
-flash(100,2)
+# --- Wifi ---
+def connectWifi():
+    timerBeforeRestart = 20
+    if not wlan.isconnected():
+        print('connecting to network...')
+        wlan.active(True)
+        wlan.connect(SSID, SSID_PASSWORD)
+        while not wlan.isconnected():
+            if timerBeforeRestart <=0:
+                reset()
+            print("Attempting to connect....")
+            flash(1000,1)
+            timerBeforeRestart = timerBeforeRestart -1
+    print('Connected! Network config:', wlan.ifconfig())
 
 
 #####
@@ -122,28 +138,14 @@ epd = EPD_2in7()
 
 
 ##########
-# Functions
+# Main
 ##########
-def connectWifi():
-    timerBeforeRestart = 20
-    if not wlan.isconnected():
-        print('connecting to network...')
-        wlan.active(True)
-        wlan.connect(SSID, SSID_PASSWORD)
-        while not wlan.isconnected():
-            if timerBeforeRestart <=0:
-                reset()
-            print("Attempting to connect....")
-            flash(1000,1)
-            timerBeforeRestart = timerBeforeRestart -1
-    print('Connected! Network config:', wlan.ifconfig())
-
 
 # Verbinde initial mit dem WLAN
 connectWifi()
 
 
-# --- HAUPTSCHLEIFE ---
+# --- main loop ---
 while True:
     try:
         # ----- Zeit-Synchronisation (NTP) -----
@@ -251,7 +253,7 @@ while True:
 
         if consecutive_errors >= 3:
             print("Drei aufeinanderfolgende Fehler. Führe einen Neustart durch...")
-            sleep(5)
+            sleep(1)
             reset()
         else:
             print("Fehler wird vorübergehend ignoriert. Nächster Versuch in Kürze.")
@@ -263,7 +265,7 @@ while True:
             except OSError:
                 pass
         mqtt_client_hass.sock = None
-        sleep(5)
+        sleep(3)
 
     gc.collect()
     print(f"Warte {waitingTimeinS} Sekunden bis zur nächsten Messung...")
