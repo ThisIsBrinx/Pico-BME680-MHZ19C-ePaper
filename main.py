@@ -21,7 +21,7 @@ except ImportError:
 #####
 # short init
 #####
-led = machine.Pin('LED', machine.Pin.OUT, value=0)
+led = Pin('LED', Pin.OUT, value=0)
 led.on()
 
 def flash(timeInMs, repeat):
