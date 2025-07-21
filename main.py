@@ -90,6 +90,7 @@ voc_baseline = load_baseline() # Lade den gespeicherten Basiswert beim Start
 last_ntp_sync = 0
 time_synced = False
 last_save_time = utime.time() # Zeit des letzten Speicherns merken
+consecutive_errors = 0 # Fehlerzähler
 
 
 #####
@@ -242,8 +243,20 @@ while True:
         print(f"CO2: {co2} ppm ({co2_bewertung}), Temp: {temp:.1f} C, rH: {humi:.1f} %, Luftguete: {luftguete_prozent:.0f}% (VOC: {voc} Ohm, Base: {voc_baseline:.0f})")
         print("============\n")
 
+        consecutive_errors = 0
+
     except (OSError, MQTTException) as e:
-        print(f"Fehler aufgetreten: {e}. Setze Verbindung zurück.")
+        consecutive_errors += 1
+        print(f"FEHLER ({consecutive_errors}/3): {e}.")
+
+        if consecutive_errors >= 3:
+            print("Drei aufeinanderfolgende Fehler. Führe einen Neustart durch...")
+            sleep(5)
+            reset()
+        else:
+            print("Fehler wird vorübergehend ignoriert. Nächster Versuch in Kürze.")
+        
+        # Setze die MQTT-Verbindung zurück, damit sie im nächsten Durchlauf neu versucht wird
         if mqtt_client_hass is not None and mqtt_client_hass.sock is not None:
             try:
                 mqtt_client_hass.sock.close()
