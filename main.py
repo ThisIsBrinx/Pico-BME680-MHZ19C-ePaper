@@ -62,7 +62,7 @@ def load_baseline():
 
 # --- Wifi ---
 def connectWifi():
-    timerBeforeRestart = 20
+    timerBeforeRestart = 10
     if not wlan.isconnected():
         print('connecting to network...')
         wlan.active(True)
@@ -107,6 +107,20 @@ last_ntp_sync = 0
 time_synced = False
 last_save_time = utime.time() # Zeit des letzten Speicherns merken
 consecutive_errors = 0 # Fehlerzähler
+
+# --- Trends ---
+# Wir speichern die letzten 5 Messwerte
+history_size = 5
+co2_history = []
+voc_history = []
+temp_history = []
+humi_history = []
+
+# Start-Annahme für die Trends
+co2_trend = '→'
+voc_trend = '→'
+temp_trend = '→'
+humi_trend = '→'
 
 
 #####
@@ -204,6 +218,56 @@ while True:
             save_baseline(voc_baseline)
             last_save_time = utime.time()
 
+        # --- ERWEITERT: Stabile Trend-Analyse für alle Werte ---
+        # 1. Historien aktualisieren
+        co2_history.append(co2)
+        voc_history.append(luftguete_prozent)
+        temp_history.append(temp)
+        humi_history.append(humi)
+        
+        # Sicherstellen, dass die Historien nicht zu lang werden
+        if len(co2_history) > history_size:
+            co2_history.pop(0)
+            voc_history.pop(0)
+            temp_history.pop(0)
+            humi_history.pop(0)
+
+        # 2. Trends nur berechnen, wenn wir genug Daten haben
+        if len(co2_history) == history_size:
+            co2_avg = sum(co2_history) / history_size
+            voc_avg = sum(voc_history) / history_size
+            temp_avg = sum(temp_history) / history_size
+            humi_avg = sum(humi_history) / history_size
+            
+            # Hysterese-Schwellen definieren
+            co2_hysteresis = 20
+            voc_hysteresis = 5
+            temp_hysteresis = 0.5 # Grad Celsius
+            humi_hysteresis = 2   # Prozentpunkte
+            
+            # CO2-Trend
+            if co2 > co2_avg + co2_hysteresis: co2_trend = '↑'
+            elif co2 < co2_avg - co2_hysteresis: co2_trend = '↓'
+            else: co2_trend = '→'
+
+            # VOC-Trend
+            if luftguete_prozent < voc_avg - voc_hysteresis: voc_trend = '↓'
+            elif luftguete_prozent > voc_avg + voc_hysteresis: voc_trend = '↑'
+            else: voc_trend = '→'
+            
+            # Temperatur-Trend
+            if temp > temp_avg + temp_hysteresis: temp_trend = '↑'
+            elif temp < temp_avg - temp_hysteresis: temp_trend = '↓'
+            else: temp_trend = '→'
+
+            # Feuchtigkeits-Trend
+            if humi > humi_avg + humi_hysteresis: humi_trend = '↑'
+            elif humi < humi_avg - humi_hysteresis: humi_trend = '↓'
+            else: humi_trend = '→'
+
+
+
+
         ###
         # 3. MQTT Daten senden
         ###
@@ -220,23 +284,23 @@ while True:
         epd.image4Gray.text(zeit_str, 120, 8, epd.black)
         epd.image4Gray.hline(8, 24, 160, epd.black)
         
-        epd.image4Gray.text("CO2", 15, 45, epd.black)
+        epd.image4Gray.text(f"CO2 ({co2_trend})", 15, 45, epd.black)
         epd.image4Gray.text(f"{co2} ppm", 100, 45, epd.black)
         epd.image4Gray.text(f"({co2_bewertung})", 65, 65, epd.black)
         epd.image4Gray.hline(8, 90, 160, epd.black)
         
         y_pos = 110
-        epd.image4Gray.text("Temperatur", 15, y_pos, epd.black)
+        epd.image4Gray.text(f"Temperatur ({temp_trend})", 15, y_pos, epd.black)
         epd.image4Gray.text(f"{temp:.1f} C", 115, y_pos, epd.black)
         epd.image4Gray.hline(15, y_pos + 20, 146, epd.black)
         
         y_pos += 35
-        epd.image4Gray.text("Feuchtigkeit", 15, y_pos, epd.black)
+        epd.image4Gray.text(f"Feuchtigkeit ({humi_trend})", 15, y_pos, epd.black)
         epd.image4Gray.text(f"{humi:.1f} %", 115, y_pos, epd.black)
         epd.image4Gray.hline(15, y_pos + 20, 146, epd.black)
         
         y_pos += 35
-        epd.image4Gray.text("Luftguete", 15, y_pos, epd.black)
+        epd.image4Gray.text(f"Luftguete ({voc_trend})", 15, y_pos, epd.black)
         epd.image4Gray.text(f"{luftguete_prozent:.0f} %", 115, y_pos, epd.black)
 
         epd.EPD_2IN7_4Gray_Display(epd.buffer_4Gray)
